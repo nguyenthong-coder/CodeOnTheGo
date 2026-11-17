@@ -4,6 +4,19 @@ A debug-only SQLite debugger and MCP server that runs inside apps built with Cod
 
 The module builds an AAR with `libsqlitedbg.so` for arm64-v8a and armeabi-v7a in one artifact, so it has no v7/v8 flavors (`AndroidModuleConf`). Its minSdk is 21, requery's, because the debugger runs on requery's SQLite. The unit test task is `:subprojects:sqlite-debugger:testDebugUnitTest`.
 
+## Turning it on in an app
+
+A project made from the JavaScript in SQLite template has it on already. For any other project:
+
+1. Add `cogo.sqliteDebugger=true` to the project's `gradle.properties` ([where else it can go](../../gradle-plugin/docs/sqlite-rewrite.md#turning-it-on)).
+2. Copy `app/libs/sqlite-android.aar` (requery) from a project made from that template into the app's `libs/`, and add `implementation(files("libs/sqlite-android.aar"))`.
+3. Check that the app depends on androidx.sqlite (Room and WorkManager bring it) and androidx.core (AppCompat brings it). requery needs both, and a file dependency brings neither.
+4. Build and run the debug variant. The app starts the server and sends its port and token to Code on the Go (ADFA-7137), and AI-Agent-MCP connects to it with no setup (ADFA-7139). In phase 1 the Agent asks before each call (ADFA-7147).
+
+The app's code does not change: the build moves the app and its libraries from Android's SQLite to requery in every variant, release included, so debug and release run the same SQLite. Release builds never contain the debugger. While the line is on, Quick Build is off for the project. Commenting the line out turns all of this off.
+
+Not covered: Room's `BundledSQLiteDriver`, which brings its own SQLite. When the app or one of its libraries uses something requery lacks, the build fails, names the class, method and line, and says how to build without the debugger; the list is under [Rules](../../gradle-plugin/docs/sqlite-rewrite.md#rules).
+
 ## How it fits together
 
 ```
@@ -25,6 +38,7 @@ MCP client --HTTP, 127.0.0.1--> McpHttp -> McpProtocol -> DatabaseTools -> Debug
 - `EndpointBroadcast` runs once the server listens, on every process start (the port changes). It sends an explicit broadcast, action `com.itsaky.androidide.SQLITE_DEBUGGER_ENDPOINT`, to `com.itsaky.androidide` with `FLAG_INCLUDE_STOPPED_PACKAGES`, carrying the token, the port and a `PendingIntent` that identifies the app. The `PendingIntent` is immutable (on API 23 and later; the flag does not exist before) and wraps an intent that is never sent: Code on the Go reads its `creatorPackage`, which the framework sets and another app cannot forge, as the app's package name. The library manifest declares `<queries>` for Code on the Go. A failure to send is logged and never thrown.
 - On the Code on the Go side, `DebuggerEndpointReceiver` (exported) validates the token and port and resolves the sender, then `DebuggerEndpointRepository` stores them in `debugger_endpoint_table` of the Recent Projects database, keyed by application ID. A row exists only for an app Code on the Go installed or launched (`LaunchAppAction` and `ProjectHandlerActivity` record the pairing); a broadcast from any other app stores nothing. The row is deleted with its project (foreign key, ON DELETE CASCADE).
 - Plugins get the stored endpoints through `DebuggerEndpointService` (plugin API), which needs the `debugger.endpoints` permission. `getEndpoints()` returns one entry per app of the open project that has reported (application ID, port, token, last update), read fresh on every call and not on the main thread, so a plugin asks again after a refused connection. Apps that are no longer installed are left out; an app whose process died is still listed until it reports again. The AI-Agent-MCP plugin (addons repository) is the first client.
+- **Gradle plugin wiring (ADFA-7138).** An app opts in with `cogo.sqliteDebugger=true` in its `gradle.properties`; commenting the line out turns everything off. With it, Code on the Go's Gradle plugin (`AndroidIDEGradlePlugin`) applies two plugins. `SqliteRewritePlugin` registers a class transform on every variant that moves the app's and its libraries' classes from `android.database.sqlite` to requery (see `gradle-plugin/docs/sqlite-rewrite.md`) and adds the rewrite's helper AAR (`:subprojects:sqlite-rewrite-runtime`) to every variant. `SqliteDebuggerPlugin` adds the debugger AAR and kotlin-stdlib to debuggable variants only. Code on the Go passes both AAR paths to Gradle as properties. Quick Build is not applied to an opted-in project, because its payload would compile the project's source without the rewrite. The apps' minSdk must be at least 21, the floor of requery, the helper AAR and the debugger.
 
 ### The event record
 
@@ -51,5 +65,4 @@ The layout of `sqlitedbg_event_record` lives in `sqlitedbg.h`. The JNI layer han
 
 ## Not done yet
 
-- Gradle plugin wiring and the build-time rewrite that adds the library to debug builds (ADFA-7138).
 - A device run of the current code. The device results on ADFA-7135 (statements captured on both ABIs, the overhead) predate the review fixes.

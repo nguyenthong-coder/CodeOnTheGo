@@ -134,6 +134,23 @@ internal class FakeProjectManager(
 internal fun unsyncedProjectManager(projectRoot: File): FakeProjectManager = FakeProjectManager(projectRoot, workspace = null)
 
 /**
+ * A project model that has no workspace and no modules until [published] is set, when it answers
+ * as [synced] does: a tap during the sync, and the sync finishing while Quick Build works.
+ */
+internal class SyncingProjectManager(
+	private val synced: FakeProjectManager,
+) : IProjectManager by synced {
+	var published = false
+
+	override val workspace: Workspace?
+		get() = if (published) synced.workspace else null
+
+	override fun getAndroidModules(): List<AndroidModule> = if (published) synced.getAndroidModules() else emptyList()
+
+	override fun getAndroidAppModules(): List<AndroidModule> = if (published) synced.getAndroidAppModules() else emptyList()
+}
+
+/**
  * An Android module as the Build Variants sidebar presents it.
  *
  * Mocked rather than built from a real model: [AndroidModule.getSelectedVariant] reads the
@@ -144,15 +161,19 @@ internal fun unsyncedProjectManager(projectRoot: File): FakeProjectManager = Fak
  * @param variantName the selected variant, or null for the mid-sync read the provisioner
  *   falls back to the default variant on.
  * @param buildDir the module's build directory as the synced model reports it.
+ * @param projectDir the module's directory, where the SQLite debugger opt-in check reads its
+ *   `gradle.properties`.
  */
 internal fun androidModule(
 	path: String = ":app",
 	variantName: String? = "debug",
 	buildDir: File = File("/fake-project/app/build"),
+	projectDir: File = File("/fake-project/app"),
 ): AndroidModule =
 	mockk<AndroidModule>().also { module ->
 		every { module.path } returns path
 		every { module.buildDirPath } returns buildDir.path
+		every { module.projectDirPath } returns projectDir.path
 		every { module.getSelectedVariant() } returns
 			variantName?.let {
 				AndroidModels.AndroidVariant
@@ -257,7 +278,10 @@ internal fun testProvisioner(
 	projectRoot: File,
 	buildService: BuildService? = FakeBuildService(),
 	projectManager: IProjectManager =
-		FakeProjectManager(projectRoot, appModules = listOf(androidModule(buildDir = File(projectRoot, "app/build")))),
+		FakeProjectManager(
+			projectRoot,
+			appModules = listOf(androidModule(buildDir = File(projectRoot, "app/build"), projectDir = File(projectRoot, "app"))),
+		),
 	installer: ProxyAppInstaller = recordingInstaller(),
 	packages: InstalledPackages = FakePackages(),
 	apkCertSha256: (File) -> String? = { null },

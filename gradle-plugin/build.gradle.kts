@@ -93,10 +93,21 @@ dependencies {
 	// claim the minAgpCheck guard below keeps honest by recompiling them against it.
 	add("androidBuildTool", libs.android.gradle.plugin)
 
+	// The SQLite rewrite (ADFA-7138). AGP's runtime classpath carries ASM, but its API
+	// artifacts expose only asm itself, so the rewrite compiles against the rest of it here.
+	compileOnly(libs.ow2.asm)
+	compileOnly(libs.ow2.asmCommons)
+	compileOnly(libs.ow2.asmTree)
+	compileOnly(libs.ow2.asmAnalysis)
+
 	testImplementation(gradleTestKit())
 	testImplementation(libs.tests.junit.jupiter)
 	testImplementation(libs.tests.google.truth)
 	testImplementation(projects.shared)
+	testImplementation(libs.ow2.asm)
+	testImplementation(libs.ow2.asmCommons)
+	testImplementation(libs.ow2.asmTree)
+	testImplementation(libs.ow2.asmAnalysis)
 
 	testRuntimeOnly(libs.tests.junit.platformLauncher)
 }
@@ -125,6 +136,10 @@ dependencies {
 	"minAgpCheckImplementation"(libs.composite.constants)
 	"minAgpCheckImplementation"(projects.gradlePluginConfig)
 	"minAgpCheckImplementation"(projects.buildInfo)
+	"minAgpCheckCompileOnly"(libs.ow2.asm)
+	"minAgpCheckCompileOnly"(libs.ow2.asmCommons)
+	"minAgpCheckCompileOnly"(libs.ow2.asmTree)
+	"minAgpCheckCompileOnly"(libs.ow2.asmAnalysis)
 }
 
 tasks.named("check") {
@@ -159,6 +174,15 @@ gradlePlugin {
 			description =
 				"Gradle plugin for applying LogSender-specific configuration to projects that are built with AndroidIDE"
 			tags.set(setOf("androidide", "logsender"))
+		}
+
+		create("sqliteDebuggerPlugin") {
+			id = "${BuildConfig.PACKAGE_NAME}.sqlitedebugger"
+			implementationClass = "${BuildConfig.PACKAGE_NAME}.gradle.SqliteDebuggerPlugin"
+			displayName = "AndroidIDE SQLite Debugger Gradle Plugin"
+			description =
+				"Gradle plugin for adding the SQLite debugger to debuggable variants of projects that are built with AndroidIDE"
+			tags.set(setOf("androidide", "sqlite"))
 		}
 	}
 }

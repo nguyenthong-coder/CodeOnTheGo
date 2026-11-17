@@ -15,6 +15,7 @@ import com.itsaky.androidide.tooling.api.messages.BuildRunType
 import com.itsaky.androidide.tooling.api.messages.GradleBuildParams
 import com.itsaky.androidide.tooling.api.messages.TaskExecutionMessage
 import com.itsaky.androidide.tooling.api.messages.result.TaskExecutionResult
+import com.itsaky.androidide.utils.Environment
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.delay
@@ -340,10 +341,16 @@ class GradleQuickBuildProvisioner(
 				log.info("A Gradle build is already in progress; not staging for the Quick Build proxy app build")
 				return ProxyAppBuildResult.SlotBusy
 			}
-			stage(context, paths)
-
 			val projectManager = lookupProjectManager()
 			val projectRoot = File(projectManager.projectDirPath)
+
+			// Before staging, which a refused build need not pay for: the Gradle plugin never applies Quick
+			// Build to an opted-in project, so building would only end in "variant setup missing". During
+			// a sync the model has no app modules yet, so an opt-in in a module's own gradle.properties is
+			// seen only by the second check, after the wait for the model.
+			val modulesKnown = projectManager.workspace != null
+			sqliteDebuggerRefusal(projectManager, projectRoot)?.let { return it }
+			stage(context, paths)
 
 			// The project model only exists once CoGo's Gradle sync has populated it, and a tap
 			// during sync is common (the user opens a project and reaches straight for Quick
@@ -354,6 +361,9 @@ class GradleQuickBuildProvisioner(
 				return ProxyAppBuildResult.Failed(
 					context.getString(R.string.quick_build_waiting_for_sync),
 				)
+			}
+			if (!modulesKnown) {
+				sqliteDebuggerRefusal(projectManager, projectRoot)?.let { return it }
 			}
 
 			val module =
@@ -524,6 +534,30 @@ class GradleQuickBuildProvisioner(
 			log.warn("Could not cancel the Quick Build proxy app build", e)
 			false
 		}
+	}
+
+	/**
+	 * The refusal for a project with `cogo.sqliteDebugger=true`, or null. It reads the app modules'
+	 * own `gradle.properties` only for the modules [projectManager] knows, which is none before the
+	 * sync publishes the model.
+	 */
+	private fun sqliteDebuggerRefusal(
+		projectManager: IProjectManager,
+		projectRoot: File,
+	): ProxyAppBuildResult.Failed? {
+		val refusal =
+			QuickBuildProjectSupport.sqliteDebuggerMessage(
+				QuickBuildProjectSupport.isSqliteDebuggerEnabled(
+					projectRoot,
+					Environment.GRADLE_USER_HOME,
+					projectManager.getAndroidAppModules().map { File(it.projectDirPath) },
+				),
+			) ?: return null
+		log.info(
+			"Quick Build is not provisioned: {} is true in the Gradle user home's, an app module's or the project's gradle.properties",
+			GradlePluginConfig.PROPERTY_SQLITE_DEBUGGER_ENABLED,
+		)
+		return ProxyAppBuildResult.Failed(context.getString(refusal))
 	}
 
 	/** `:app` -> `<root>/app`; nested paths (`:feature:home`) map to nested dirs. */
