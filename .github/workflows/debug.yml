@@ -10,6 +10,7 @@ on:
   push:
     branches-ignore:
       - main
+      - mk-safe-clipboard-isolated-bootstrap
 
   workflow_dispatch: { }
 
