@@ -126,7 +126,24 @@ jobs:
             test "$stale" -eq 0
             printf "VERIFIED_PACKAGE=%s\nVERIFIED_DATA_DIR=%s\nVERIFIED_PROJECT=%s\nVERIFIED_ROOTFS=%s\nVERIFIED_PREFIX=%s\n" \
               "$TERMUX_APP__PACKAGE_NAME" "$TERMUX_APP__DATA_DIR" "$TERMUX__PROJECT_DIR" "$TERMUX__ROOTFS" "$TERMUX__PREFIX"
-            ./scripts/build-bootstraps.sh --architectures aarch64 -f
+            # The pinned upstream build-bootstraps.sh -f branch expands an
+            # unset TERMUX_BUILT_PACKAGES_DIRECTORY_FOR_ARCH as "/*".
+            # Never invoke that path. This is a fresh disposable container;
+            # require both local package stores to be absent or empty instead.
+            built_store="/data/data/.built-packages"
+            output_store="/home/builder/termux-packages/output"
+            for store in "$built_store" "$output_store"; do
+              if [ -e "$store" ]; then
+                test -d "$store"
+                test ! -L "$store"
+                first_entry="$(find "$store" -mindepth 1 -maxdepth 1 -print -quit)"
+                if [ -n "$first_entry" ]; then
+                  echo "REFUSING_NONEMPTY_BUILD_STORE=$store"
+                  exit 1
+                fi
+              fi
+            done
+            ./scripts/build-bootstraps.sh --architectures aarch64
             test -s /home/builder/termux-packages/bootstrap-aarch64.zip
             python3 -c "import zipfile; a=\"/home/builder/termux-packages/bootstrap-aarch64.zip\"; z=zipfile.ZipFile(a); n={x.lstrip(\"./\"):x for x in z.namelist()}; p=b\"/data/data/com.mkbrain.cogo/files/usr\"; o=(b\"/data/data/com.termux/files/usr\",b\"/data/data/com.itsaky.androidide/files/usr\"); assert \"SYMLINKS.txt\" in n; [(lambda d,k: (print(\"VERIFIED_BINARY=\"+k+\"; custom_prefix_occurrences=\"+str(d.count(p))), [(_ for _ in ()).throw(AssertionError(\"old prefix in \"+k)) for x in o if x in d], (_ for _ in ()).throw(AssertionError(\"custom prefix missing in \"+k)) if p not in d else None))(z.read(n[k]),k) for k in (\"bin/bash\",\"bin/apt\",\"bin/dpkg\")]"
             echo "BOOTSTRAP_ARCHIVE_CONTENT=PASS"
