@@ -86,8 +86,8 @@ jobs:
             echo "workflow_run_id=$GITHUB_RUN_ID"
             echo "sha256=$(sha256sum termux-packages/bootstrap-aarch64.zip | cut -d' ' -f1)"
             echo "size_bytes=$(stat -c '%s' termux-packages/bootstrap-aarch64.zip)"
-          } > "$${{ runner.temp }}/MK_COGO_BOOTSTRAP_MANIFEST.txt"
-          cat "$${{ runner.temp }}/MK_COGO_BOOTSTRAP_MANIFEST.txt"
+          } > "termux-packages/MK_COGO_BOOTSTRAP_MANIFEST.txt"
+          cat "termux-packages/MK_COGO_BOOTSTRAP_MANIFEST.txt"
 
       - name: Upload verified bootstrap artifact
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
@@ -95,6 +95,6 @@ jobs:
           name: mk-cogo-bootstrap-arm64-com-mkbrain-cogo
           path: |
             termux-packages/bootstrap-aarch64.zip
-            ${{ runner.temp }}/MK_COGO_BOOTSTRAP_MANIFEST.txt
+            termux-packages/MK_COGO_BOOTSTRAP_MANIFEST.txt
           if-no-files-found: error
           retention-days: 14
