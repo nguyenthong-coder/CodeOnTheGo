@@ -1,0 +1,100 @@
+name: Build isolated CodeOnTheGo Termux bootstrap
+
+on:
+  push:
+    branches:
+      - mk-safe-clipboard-isolated-bootstrap
+    paths:
+      - .github/workflows/mk-cogo-isolated-bootstrap.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: mk-cogo-isolated-bootstrap-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-bootstrap:
+    name: Build ARM64 bootstrap for com.mkbrain.cogo
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout CodeOnTheGo branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - name: Checkout pinned Termux package sources
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: termux/termux-packages
+          ref: 15e04b447d07a1f82bd824797490cebc88837850
+          path: termux-packages
+          persist-credentials: false
+
+      - name: Verify pinned source revision and build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git -C termux-packages rev-parse HEAD)"
+          expected="15e04b447d07a1f82bd824797490cebc88837850"
+          test "$actual" = "$expected"
+          test -x termux-packages/scripts/run-docker.sh
+          test -x termux-packages/scripts/build-bootstraps.sh
+          echo "TERMUX_SOURCE_COMMIT=$actual" >> "$GITHUB_ENV"
+          echo "TERMUX_APP_PACKAGE=com.mkbrain.cogo" >> "$GITHUB_ENV"
+
+      - name: Build bootstrap inside the official Termux package-builder container
+        working-directory: termux-packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/run-docker.sh bash -lc '
+            set -euo pipefail
+            cd /home/builder/termux-packages
+            mkdir -p "$HOME/.termux"
+            printf "%s\n" "TERMUX_APP__PACKAGE_NAME=\"com.mkbrain.cogo\"" > "$HOME/.termux/termuxrc.sh"
+            source ./scripts/properties.sh
+            test "$TERMUX_APP__PACKAGE_NAME" = "com.mkbrain.cogo"
+            test "$TERMUX_APP__DATA_DIR" = "/data/data/com.mkbrain.cogo"
+            test "$TERMUX__PREFIX" = "/data/data/com.mkbrain.cogo/files/usr"
+            printf "VERIFIED_PACKAGE=%s\nVERIFIED_DATA_DIR=%s\nVERIFIED_PREFIX=%s\n" \
+              "$TERMUX_APP__PACKAGE_NAME" "$TERMUX_APP__DATA_DIR" "$TERMUX__PREFIX"
+            ./scripts/build-bootstraps.sh --architectures aarch64 -f
+            test -s /home/builder/termux-packages/bootstrap-aarch64.zip
+            python3 -c "import zipfile; a=\"/home/builder/termux-packages/bootstrap-aarch64.zip\"; z=zipfile.ZipFile(a); n={x.lstrip(\"./\"):x for x in z.namelist()}; p=b\"/data/data/com.mkbrain.cogo/files/usr\"; o=(b\"/data/data/com.termux/files/usr\",b\"/data/data/com.itsaky.androidide/files/usr\"); assert \"SYMLINKS.txt\" in n; [(lambda d,k: (print(\"VERIFIED_BINARY=\"+k+\"; custom_prefix_occurrences=\"+str(d.count(p))), [(_ for _ in ()).throw(AssertionError(\"old prefix in \"+k)) for x in o if x in d], (_ for _ in ()).throw(AssertionError(\"custom prefix missing in \"+k)) if p not in d else None))(z.read(n[k]),k) for k in (\"bin/bash\",\"bin/apt\",\"bin/dpkg\")]"
+            echo "BOOTSTRAP_ARCHIVE_CONTENT=PASS"
+          '
+
+      - name: Create build manifest and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s termux-packages/bootstrap-aarch64.zip
+          sha256sum termux-packages/bootstrap-aarch64.zip
+          {
+            echo "artifact=bootstrap-aarch64.zip"
+            echo "package_id=com.mkbrain.cogo"
+            echo "termux_prefix=/data/data/com.mkbrain.cogo/files/usr"
+            echo "termux_packages_commit=$TERMUX_SOURCE_COMMIT"
+            echo "repository_commit=$GITHUB_SHA"
+            echo "workflow_run_id=$GITHUB_RUN_ID"
+            echo "sha256=$(sha256sum termux-packages/bootstrap-aarch64.zip | cut -d' ' -f1)"
+            echo "size_bytes=$(stat -c '%s' termux-packages/bootstrap-aarch64.zip)"
+          } > "$${{ runner.temp }}/MK_COGO_BOOTSTRAP_MANIFEST.txt"
+          cat "$${{ runner.temp }}/MK_COGO_BOOTSTRAP_MANIFEST.txt"
+
+      - name: Upload verified bootstrap artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mk-cogo-bootstrap-arm64-com-mkbrain-cogo
+          path: |
+            termux-packages/bootstrap-aarch64.zip
+            ${{ runner.temp }}/MK_COGO_BOOTSTRAP_MANIFEST.txt
+          if-no-files-found: error
+          retention-days: 14
