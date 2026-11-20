@@ -178,8 +178,16 @@ jobs:
                 fi
               fi
             done
-            test -d /home/builder/termux-packages/output
-            test -w /home/builder/termux-packages/output
+            output_store="/home/builder/termux-packages/output"
+            if [ -e "$output_store" ]; then
+              test -d "$output_store"
+              test ! -L "$output_store"
+            else
+              mkdir -p "$output_store"
+            fi
+            test -d "$output_store"
+            test ! -L "$output_store"
+            test -w "$output_store"
             ./scripts/build-bootstraps.sh --architectures aarch64
             test -s /home/builder/termux-packages/output/bootstrap-aarch64.zip
             python3 -c "import zipfile; a=\"/home/builder/termux-packages/output/bootstrap-aarch64.zip\"; z=zipfile.ZipFile(a); n={x.lstrip(\"./\"):x for x in z.namelist()}; p=b\"/data/data/com.mkbrain.cogo/files/usr\"; o=(b\"/data/data/com.termux/files/usr\",b\"/data/data/com.itsaky.androidide/files/usr\"); assert \"SYMLINKS.txt\" in n; [(lambda d,k: (print(\"VERIFIED_BINARY=\"+k+\"; custom_prefix_occurrences=\"+str(d.count(p))), [(_ for _ in ()).throw(AssertionError(\"old prefix in \"+k)) for x in o if x in d], (_ for _ in ()).throw(AssertionError(\"custom prefix missing in \"+k)) if p not in d else None))(z.read(n[k]),k) for k in (\"bin/bash\",\"bin/apt\",\"bin/dpkg\")]"
