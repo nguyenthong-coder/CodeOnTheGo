@@ -49,6 +49,36 @@ jobs:
           echo "TERMUX_SOURCE_COMMIT=$actual" >> "$GITHUB_ENV"
           echo "TERMUX_APP_PACKAGE=com.mkbrain.cogo" >> "$GITHUB_ENV"
 
+      - name: Apply pinned Termux subpackage compatibility patch
+        working-directory: termux-packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch_sha="$(python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path("scripts/build-bootstraps.sh")
+          original = p.read_text()
+          old = 'PACKAGES+=("bzip2")'
+          new = 'PACKAGES+=("libbz2")'
+          if original.count(old) != 1:
+              raise SystemExit("GUARD_BLOCKED: expected exactly one bzip2 bootstrap entry")
+          subpkg = Path("packages/libbz2/bzip2.subpackage.sh")
+          if not subpkg.is_file() or "TERMUX_SUBPKG_INCLUDE" not in subpkg.read_text():
+              raise SystemExit("GUARD_BLOCKED: libbz2 bzip2 subpackage definition missing")
+          patched = original.replace(old, new, 1)
+          p.write_text(patched)
+          print(hashlib.sha256(patched.encode()).hexdigest())
+          PY
+          )"
+          test -n "$patch_sha"
+          echo "TERMUX_BOOTSTRAP_PATCH_SHA256=$patch_sha" >> "$GITHUB_ENV"
+          git diff --check
+          changes="$(git status --short)"
+          test "$changes" = " M scripts/build-bootstraps.sh"
+          echo "TERMUX_BOOTSTRAP_PATCH_SHA256=$patch_sha"
+          echo "$changes"
+
       - name: Build bootstrap inside the official Termux package-builder container
         working-directory: termux-packages
         shell: bash
@@ -146,6 +176,7 @@ jobs:
             ./scripts/build-bootstraps.sh --architectures aarch64
             test -s /home/builder/termux-packages/bootstrap-aarch64.zip
             python3 -c "import zipfile; a=\"/home/builder/termux-packages/bootstrap-aarch64.zip\"; z=zipfile.ZipFile(a); n={x.lstrip(\"./\"):x for x in z.namelist()}; p=b\"/data/data/com.mkbrain.cogo/files/usr\"; o=(b\"/data/data/com.termux/files/usr\",b\"/data/data/com.itsaky.androidide/files/usr\"); assert \"SYMLINKS.txt\" in n; [(lambda d,k: (print(\"VERIFIED_BINARY=\"+k+\"; custom_prefix_occurrences=\"+str(d.count(p))), [(_ for _ in ()).throw(AssertionError(\"old prefix in \"+k)) for x in o if x in d], (_ for _ in ()).throw(AssertionError(\"custom prefix missing in \"+k)) if p not in d else None))(z.read(n[k]),k) for k in (\"bin/bash\",\"bin/apt\",\"bin/dpkg\")]"
+            python3 -c "import zipfile; z=zipfile.ZipFile('/home/builder/termux-packages/bootstrap-aarch64.zip'); n={p.lstrip('./') for p in z.namelist()}; required={'bin/bzip2','lib/libbz2.so.1.0.8'}; missing=required-n; assert not missing, 'missing bzip2 entries '+repr(missing); print('VERIFIED_BZIP2_ENTRIES='+repr(sorted(required)))"
             echo "BOOTSTRAP_ARCHIVE_CONTENT=PASS"
           '
 
@@ -160,6 +191,7 @@ jobs:
             echo "package_id=com.mkbrain.cogo"
             echo "termux_prefix=/data/data/com.mkbrain.cogo/files/usr"
             echo "termux_packages_commit=$TERMUX_SOURCE_COMMIT"
+            echo "bootstrap_script_patch_sha256=$TERMUX_BOOTSTRAP_PATCH_SHA256"
             echo "repository_commit=$GITHUB_SHA"
             echo "workflow_run_id=$GITHUB_RUN_ID"
             echo "sha256=$(sha256sum termux-packages/bootstrap-aarch64.zip | cut -d' ' -f1)"
