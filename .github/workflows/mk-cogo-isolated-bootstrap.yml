@@ -67,6 +67,11 @@ jobs:
           if not subpkg.is_file() or "TERMUX_SUBPKG_INCLUDE" not in subpkg.read_text():
               raise SystemExit("GUARD_BLOCKED: libbz2 bzip2 subpackage definition missing")
           patched = original.replace(old, new, 1)
+          old_output = 'mv -f "${BOOTSTRAP_TMPDIR}/bootstrap-${1}.zip" "$TERMUX_PACKAGES_DIRECTORY/"'
+          new_output = 'mv -f "${BOOTSTRAP_TMPDIR}/bootstrap-${1}.zip" "$TERMUX_BUILT_DEBS_DIRECTORY/"'
+          if patched.count(old_output) != 1:
+              raise SystemExit("GUARD_BLOCKED: expected exactly one bootstrap ZIP destination")
+          patched = patched.replace(old_output, new_output, 1)
           p.write_text(patched)
           print(hashlib.sha256(patched.encode()).hexdigest())
           PY
@@ -173,10 +178,12 @@ jobs:
                 fi
               fi
             done
+            test -d /home/builder/termux-packages/output
+            test -w /home/builder/termux-packages/output
             ./scripts/build-bootstraps.sh --architectures aarch64
-            test -s /home/builder/termux-packages/bootstrap-aarch64.zip
-            python3 -c "import zipfile; a=\"/home/builder/termux-packages/bootstrap-aarch64.zip\"; z=zipfile.ZipFile(a); n={x.lstrip(\"./\"):x for x in z.namelist()}; p=b\"/data/data/com.mkbrain.cogo/files/usr\"; o=(b\"/data/data/com.termux/files/usr\",b\"/data/data/com.itsaky.androidide/files/usr\"); assert \"SYMLINKS.txt\" in n; [(lambda d,k: (print(\"VERIFIED_BINARY=\"+k+\"; custom_prefix_occurrences=\"+str(d.count(p))), [(_ for _ in ()).throw(AssertionError(\"old prefix in \"+k)) for x in o if x in d], (_ for _ in ()).throw(AssertionError(\"custom prefix missing in \"+k)) if p not in d else None))(z.read(n[k]),k) for k in (\"bin/bash\",\"bin/apt\",\"bin/dpkg\")]"
-            python3 -c "import zipfile; z=zipfile.ZipFile('/home/builder/termux-packages/bootstrap-aarch64.zip'); n={p.lstrip('./') for p in z.namelist()}; required={'bin/bzip2','lib/libbz2.so.1.0.8'}; missing=required-n; assert not missing, 'missing bzip2 entries '+repr(missing); print('VERIFIED_BZIP2_ENTRIES='+repr(sorted(required)))"
+            test -s /home/builder/termux-packages/output/bootstrap-aarch64.zip
+            python3 -c "import zipfile; a=\"/home/builder/termux-packages/output/bootstrap-aarch64.zip\"; z=zipfile.ZipFile(a); n={x.lstrip(\"./\"):x for x in z.namelist()}; p=b\"/data/data/com.mkbrain.cogo/files/usr\"; o=(b\"/data/data/com.termux/files/usr\",b\"/data/data/com.itsaky.androidide/files/usr\"); assert \"SYMLINKS.txt\" in n; [(lambda d,k: (print(\"VERIFIED_BINARY=\"+k+\"; custom_prefix_occurrences=\"+str(d.count(p))), [(_ for _ in ()).throw(AssertionError(\"old prefix in \"+k)) for x in o if x in d], (_ for _ in ()).throw(AssertionError(\"custom prefix missing in \"+k)) if p not in d else None))(z.read(n[k]),k) for k in (\"bin/bash\",\"bin/apt\",\"bin/dpkg\")]"
+            python3 -c "import zipfile; z=zipfile.ZipFile('/home/builder/termux-packages/output/bootstrap-aarch64.zip'); n={p.lstrip('./') for p in z.namelist()}; required={'bin/bzip2','lib/libbz2.so.1.0.8'}; missing=required-n; assert not missing, 'missing bzip2 entries '+repr(missing); print('VERIFIED_BZIP2_ENTRIES='+repr(sorted(required)))"
             echo "BOOTSTRAP_ARCHIVE_CONTENT=PASS"
           '
 
@@ -184,18 +191,18 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          test -s termux-packages/bootstrap-aarch64.zip
-          sha256sum termux-packages/bootstrap-aarch64.zip
+          test -s termux-packages/output/bootstrap-aarch64.zip
+          sha256sum termux-packages/output/bootstrap-aarch64.zip
           {
-            echo "artifact=bootstrap-aarch64.zip"
+            echo "artifact=output/bootstrap-aarch64.zip"
             echo "package_id=com.mkbrain.cogo"
             echo "termux_prefix=/data/data/com.mkbrain.cogo/files/usr"
             echo "termux_packages_commit=$TERMUX_SOURCE_COMMIT"
             echo "bootstrap_script_patch_sha256=$TERMUX_BOOTSTRAP_PATCH_SHA256"
             echo "repository_commit=$GITHUB_SHA"
             echo "workflow_run_id=$GITHUB_RUN_ID"
-            echo "sha256=$(sha256sum termux-packages/bootstrap-aarch64.zip | cut -d' ' -f1)"
-            echo "size_bytes=$(stat -c '%s' termux-packages/bootstrap-aarch64.zip)"
+            echo "sha256=$(sha256sum termux-packages/output/bootstrap-aarch64.zip | cut -d' ' -f1)"
+            echo "size_bytes=$(stat -c '%s' termux-packages/output/bootstrap-aarch64.zip)"
           } > "termux-packages/MK_COGO_BOOTSTRAP_MANIFEST.txt"
           cat "termux-packages/MK_COGO_BOOTSTRAP_MANIFEST.txt"
 
@@ -204,7 +211,7 @@ jobs:
         with:
           name: mk-cogo-bootstrap-arm64-com-mkbrain-cogo
           path: |
-            termux-packages/bootstrap-aarch64.zip
+            termux-packages/output/bootstrap-aarch64.zip
             termux-packages/MK_COGO_BOOTSTRAP_MANIFEST.txt
           if-no-files-found: error
           retention-days: 14
