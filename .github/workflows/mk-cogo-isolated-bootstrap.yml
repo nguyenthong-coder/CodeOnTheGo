@@ -1,5 +1,7 @@
 name: Build isolated CodeOnTheGo Termux bootstrap (MK-T)
 
+# MK-T CI trigger: verify the current SHA-pinned ARM64 bootstrap workflow.
+
 on:
   push:
     branches:
