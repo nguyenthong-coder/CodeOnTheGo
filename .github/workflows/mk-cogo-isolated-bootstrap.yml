@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   build-bootstrap:
-    name: Build ARM64 bootstrap for com.mkbrain.cogo
+    name: Build ARM64 bootstrap for com.mkbrain.cogo.host
     runs-on: ubuntu-latest
     timeout-minutes: 360
 
@@ -49,7 +49,7 @@ jobs:
           test -x termux-packages/scripts/run-docker.sh
           test -x termux-packages/scripts/build-bootstraps.sh
           echo "TERMUX_SOURCE_COMMIT=$actual" >> "$GITHUB_ENV"
-          echo "TERMUX_APP_PACKAGE=com.mkbrain.cogo" >> "$GITHUB_ENV"
+          echo "TERMUX_APP_PACKAGE=com.mkbrain.cogo.host" >> "$GITHUB_ENV"
 
       - name: Apply pinned Termux subpackage compatibility patch
         working-directory: termux-packages
@@ -126,9 +126,9 @@ jobs:
               "TERMUX__PROJECT_SUBDIR=\"cogo\"" \
               "TERMUX_APP__NAME=\"MK-T\"" \
               "TERMUX_APP__APP_IDENTIFIER=\"cogo\"" \
-              "TERMUX_APP__PACKAGE_NAME=\"com.mkbrain.cogo\"" \
+              "TERMUX_APP__PACKAGE_NAME=\"com.mkbrain.cogo.host\"" \
               "TERMUX_APP_PACKAGE=\"\$TERMUX_APP__PACKAGE_NAME\"" \
-              "TERMUX_APP__DATA_DIR=\"/data/data/com.mkbrain.cogo\"" \
+              "TERMUX_APP__DATA_DIR=\"/data/data/com.mkbrain.cogo.host\"" \
               "TERMUX__PROJECT_DIR=\"\$TERMUX_APP__DATA_DIR/\$TERMUX__PROJECT_SUBDIR\"" \
               "TERMUX__CORE_DIR=\"\$TERMUX__PROJECT_DIR/\$TERMUX__CORE_SUBDIR\"" \
               "TERMUX__APPS_DIR=\"\$TERMUX__PROJECT_DIR/\$TERMUX__APPS_SUBDIR\"" \
@@ -163,18 +163,18 @@ jobs:
             source ./scripts/properties.sh
             test "$TERMUX__INTERNAL_NAME" = "cogo"
             test "$TERMUX_APP__APP_IDENTIFIER" = "cogo"
-            test "$TERMUX_APP__PACKAGE_NAME" = "com.mkbrain.cogo"
-            test "$TERMUX_APP__DATA_DIR" = "/data/data/com.mkbrain.cogo"
-            test "$TERMUX__PROJECT_DIR" = "/data/data/com.mkbrain.cogo/cogo"
-            test "$TERMUX__CORE_DIR" = "/data/data/com.mkbrain.cogo/cogo/core"
-            test "$TERMUX__APPS_DIR" = "/data/data/com.mkbrain.cogo/cogo/app"
-            test "$TERMUX__APPS_DIR_BY_IDENTIFIER" = "/data/data/com.mkbrain.cogo/cogo/app/i"
-            test "$TERMUX__APPS_DIR_BY_UID" = "/data/data/com.mkbrain.cogo/cogo/app/u"
-            test "$TERMUX__ROOTFS" = "/data/data/com.mkbrain.cogo/files"
-            test "$TERMUX__HOME" = "/data/data/com.mkbrain.cogo/files/home"
-            test "$TERMUX__PREFIX" = "/data/data/com.mkbrain.cogo/files/usr"
-            test "$TERMUX__PREFIX__BIN_DIR" = "/data/data/com.mkbrain.cogo/files/usr/bin"
-            test "$TERMUX_APP__APP_DIR" = "/data/data/com.mkbrain.cogo/cogo/app/i/cogo"
+            test "$TERMUX_APP__PACKAGE_NAME" = "com.mkbrain.cogo.host"
+            test "$TERMUX_APP__DATA_DIR" = "/data/data/com.mkbrain.cogo.host"
+            test "$TERMUX__PROJECT_DIR" = "/data/data/com.mkbrain.cogo.host/cogo"
+            test "$TERMUX__CORE_DIR" = "/data/data/com.mkbrain.cogo.host/cogo/core"
+            test "$TERMUX__APPS_DIR" = "/data/data/com.mkbrain.cogo.host/cogo/app"
+            test "$TERMUX__APPS_DIR_BY_IDENTIFIER" = "/data/data/com.mkbrain.cogo.host/cogo/app/i"
+            test "$TERMUX__APPS_DIR_BY_UID" = "/data/data/com.mkbrain.cogo.host/cogo/app/u"
+            test "$TERMUX__ROOTFS" = "/data/data/com.mkbrain.cogo.host/files"
+            test "$TERMUX__HOME" = "/data/data/com.mkbrain.cogo.host/files/home"
+            test "$TERMUX__PREFIX" = "/data/data/com.mkbrain.cogo.host/files/usr"
+            test "$TERMUX__PREFIX__BIN_DIR" = "/data/data/com.mkbrain.cogo.host/files/usr/bin"
+            test "$TERMUX_APP__APP_DIR" = "/data/data/com.mkbrain.cogo.host/cogo/app/i/cogo"
             stale=0
             while IFS= read -r name; do
               case "$name" in TERMUX_REPO_*) continue ;; esac
@@ -218,7 +218,7 @@ jobs:
             test -w "$output_store"
             ./scripts/build-bootstraps.sh --architectures aarch64
             test -s /home/builder/termux-packages/output/bootstrap-aarch64.zip
-            python3 -c "import zipfile; a=\"/home/builder/termux-packages/output/bootstrap-aarch64.zip\"; z=zipfile.ZipFile(a); n={x.lstrip(\"./\"):x for x in z.namelist()}; p=b\"/data/data/com.mkbrain.cogo/files/usr\"; o=(b\"/data/data/com.termux/files/usr\",b\"/data/data/com.itsaky.androidide/files/usr\"); assert \"SYMLINKS.txt\" in n; [(lambda d,k: (print(\"VERIFIED_BINARY=\"+k+\"; custom_prefix_occurrences=\"+str(d.count(p))), [(_ for _ in ()).throw(AssertionError(\"old prefix in \"+k)) for x in o if x in d], (_ for _ in ()).throw(AssertionError(\"custom prefix missing in \"+k)) if p not in d else None))(z.read(n[k]),k) for k in (\"bin/bash\",\"bin/apt\",\"bin/dpkg\")]"
+            python3 -c "import zipfile; a=\"/home/builder/termux-packages/output/bootstrap-aarch64.zip\"; z=zipfile.ZipFile(a); n={x.lstrip(\"./\"):x for x in z.namelist()}; p=b\"/data/data/com.mkbrain.cogo.host/files/usr\"; o=(b\"/data/data/com.termux/files/usr\",b\"/data/data/com.itsaky.androidide/files/usr\"); assert \"SYMLINKS.txt\" in n; [(lambda d,k: (print(\"VERIFIED_BINARY=\"+k+\"; custom_prefix_occurrences=\"+str(d.count(p))), [(_ for _ in ()).throw(AssertionError(\"old prefix in \"+k)) for x in o if x in d], (_ for _ in ()).throw(AssertionError(\"custom prefix missing in \"+k)) if p not in d else None))(z.read(n[k]),k) for k in (\"bin/bash\",\"bin/apt\",\"bin/dpkg\")]"
             python3 -c "import zipfile; z=zipfile.ZipFile('/home/builder/termux-packages/output/bootstrap-aarch64.zip'); n={p.lstrip('./') for p in z.namelist()}; required={'bin/bzip2','lib/libbz2.so.1.0.8'}; missing=required-n; assert not missing, 'missing bzip2 entries '+repr(missing); print('VERIFIED_BZIP2_ENTRIES='+repr(sorted(required)))"
             echo "BOOTSTRAP_ARCHIVE_CONTENT=PASS"
           '
@@ -234,7 +234,7 @@ jobs:
           import zipfile
 
           archive = Path("termux-packages/output/bootstrap-aarch64.zip")
-          expected = b"/data/data/com.mkbrain.cogo/files/usr"
+          expected = b"/data/data/com.mkbrain.cogo.host/files/usr"
           forbidden = (
               b"/data/data/com.termux/files/usr",
               b"/data/data/com.itsaky.androidide/files/usr",
@@ -297,8 +297,8 @@ jobs:
           sha256sum termux-packages/output/bootstrap-aarch64.zip
           {
             echo "artifact=output/bootstrap-aarch64.zip"
-            echo "package_id=com.mkbrain.cogo"
-            echo "termux_prefix=/data/data/com.mkbrain.cogo/files/usr"
+            echo "package_id=com.mkbrain.cogo.host"
+            echo "termux_prefix=/data/data/com.mkbrain.cogo.host/files/usr"
             echo "termux_packages_commit=$TERMUX_SOURCE_COMMIT"
             echo "bootstrap_script_patch_sha256=$TERMUX_BOOTSTRAP_PATCH_SHA256"
             echo "repository_commit=$GITHUB_SHA"
