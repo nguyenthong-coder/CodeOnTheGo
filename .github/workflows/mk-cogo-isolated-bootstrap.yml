@@ -1,0 +1,251 @@
+name: Build isolated CodeOnTheGo Termux bootstrap (MK-T)
+
+on:
+  push:
+    branches:
+      - mk-safe-clipboard-isolated-bootstrap
+    paths:
+      - .github/workflows/mk-cogo-isolated-bootstrap.yml
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  actions: write
+
+concurrency:
+  group: mk-cogo-isolated-bootstrap-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  build-bootstrap:
+    name: Build ARM64 bootstrap for com.mkbrain.cogo
+    runs-on: ubuntu-latest
+    timeout-minutes: 360
+
+    steps:
+      - name: Checkout CodeOnTheGo branch
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          ref: ${{ github.ref }}
+          persist-credentials: false
+
+      - name: Checkout pinned Termux package sources
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          repository: termux/termux-packages
+          ref: 15e04b447d07a1f82bd824797490cebc88837850
+          path: termux-packages
+          persist-credentials: false
+
+      - name: Verify pinned source revision and build inputs
+        shell: bash
+        run: |
+          set -euo pipefail
+          actual="$(git -C termux-packages rev-parse HEAD)"
+          expected="15e04b447d07a1f82bd824797490cebc88837850"
+          test "$actual" = "$expected"
+          test -x termux-packages/scripts/run-docker.sh
+          test -x termux-packages/scripts/build-bootstraps.sh
+          echo "TERMUX_SOURCE_COMMIT=$actual" >> "$GITHUB_ENV"
+          echo "TERMUX_APP_PACKAGE=com.mkbrain.cogo" >> "$GITHUB_ENV"
+
+      - name: Apply pinned Termux subpackage compatibility patch
+        working-directory: termux-packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          patch_sha="$(python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          p = Path("scripts/build-bootstraps.sh")
+          original = p.read_text()
+          old = 'PACKAGES+=("bzip2")'
+          new = 'PACKAGES+=("libbz2")'
+          if original.count(old) != 1:
+              raise SystemExit("GUARD_BLOCKED: expected exactly one bzip2 bootstrap entry")
+          subpkg = Path("packages/libbz2/bzip2.subpackage.sh")
+          if not subpkg.is_file() or "TERMUX_SUBPKG_INCLUDE" not in subpkg.read_text():
+              raise SystemExit("GUARD_BLOCKED: libbz2 bzip2 subpackage definition missing")
+          patched = original.replace(old, new, 1)
+          old_output = 'mv -f "${BOOTSTRAP_TMPDIR}/bootstrap-${1}.zip" "$TERMUX_PACKAGES_DIRECTORY/"'
+          new_output = 'mv -f "${BOOTSTRAP_TMPDIR}/bootstrap-${1}.zip" "$TERMUX_BUILT_DEBS_DIRECTORY/"'
+          if patched.count(old_output) != 1:
+              raise SystemExit("GUARD_BLOCKED: expected exactly one bootstrap ZIP destination")
+          patched = patched.replace(old_output, new_output, 1)
+          p.write_text(patched)
+
+          nano_build = Path("packages/nano/build.sh")
+          nano_source = nano_build.read_text()
+          nano_old_url = 'TERMUX_PKG_SRCURL="https://nano-editor.org/dist/latest/nano-$TERMUX_PKG_VERSION.tar.xz"'
+          nano_new_url = 'TERMUX_PKG_SRCURL="https://mirrors.kernel.org/gnu/nano/nano-$TERMUX_PKG_VERSION.tar.xz"'
+          expected_hash = "TERMUX_PKG_SHA256=a9affc52c9596ee0682bcdd4ceb3c0b235eb221d83d733dfd9b0dff45897cb0d"
+          if nano_source.count(nano_old_url) != 1:
+              raise SystemExit("GUARD_BLOCKED: nano source URL changed or not unique")
+          if nano_source.count(expected_hash) != 1:
+              raise SystemExit("GUARD_BLOCKED: pinned Nano 9.3 SHA-256 changed")
+          nano_updated = nano_source.replace(nano_old_url, nano_new_url, 1)
+          if nano_updated.count(nano_new_url) != 1 or nano_old_url in nano_updated:
+              raise SystemExit("GUARD_BLOCKED: Nano mirror rewrite failed")
+          nano_build.write_text(nano_updated)
+          print("NANO_SOURCE_MIRROR=mirrors.kernel.org; SHA256=" + expected_hash.split("=")[1])
+          print("TERMUX_BOOTSTRAP_PATCH_SHA256=" + hashlib.sha256(patched.encode()).hexdigest())
+          PY
+          )"
+          test -n "$patch_sha"
+          echo "TERMUX_BOOTSTRAP_PATCH_SHA256=$patch_sha" >> "$GITHUB_ENV"
+          git diff --check
+          changes="$(git status --short)"
+          expected_changes="$(printf ' M packages/nano/build.sh\n M scripts/build-bootstraps.sh')"
+          test "$changes" = "$expected_changes"
+          nano_tmp="$(mktemp)"
+          trap 'rm -f "$nano_tmp"' EXIT
+          curl --fail --location --retry 2 --connect-timeout 20 --max-time 120 \
+            --output "$nano_tmp" \
+            "https://mirrors.kernel.org/gnu/nano/nano-9.3.tar.xz"
+          actual_nano_sha="$(sha256sum "$nano_tmp" | cut -d' ' -f1)"
+          test "$actual_nano_sha" = "a9affc52c9596ee0682bcdd4ceb3c0b235eb221d83d733dfd9b0dff45897cb0d"
+          echo "NANO_MIRROR_PREFLIGHT=PASS sha256=$actual_nano_sha"
+          rm -f "$nano_tmp"
+          trap - EXIT
+          echo "TERMUX_BOOTSTRAP_PATCH_SHA256=$patch_sha"
+          echo "$changes"
+
+      - name: Build bootstrap inside the official Termux package-builder container
+        working-directory: termux-packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          ./scripts/run-docker.sh bash -lc '
+            set -euo pipefail
+            cd /home/builder/termux-packages
+            mkdir -p "$HOME/.termux"
+            printf "%s\n" \
+              "TERMUX__INTERNAL_NAME=\"cogo\"" \
+              "TERMUX__PROJECT_SUBDIR=\"cogo\"" \
+              "TERMUX_APP__NAME=\"MK-T\"" \
+              "TERMUX_APP__APP_IDENTIFIER=\"cogo\"" \
+              "TERMUX_APP__PACKAGE_NAME=\"com.mkbrain.cogo\"" \
+              "TERMUX_APP_PACKAGE=\"\$TERMUX_APP__PACKAGE_NAME\"" \
+              "TERMUX_APP__DATA_DIR=\"/data/data/com.mkbrain.cogo\"" \
+              "TERMUX__PROJECT_DIR=\"\$TERMUX_APP__DATA_DIR/\$TERMUX__PROJECT_SUBDIR\"" \
+              "TERMUX__CORE_DIR=\"\$TERMUX__PROJECT_DIR/\$TERMUX__CORE_SUBDIR\"" \
+              "TERMUX__APPS_DIR=\"\$TERMUX__PROJECT_DIR/\$TERMUX__APPS_SUBDIR\"" \
+              "TERMUX__APPS_DIR_BY_IDENTIFIER=\"\$TERMUX__APPS_DIR/\$TERMUX__APPS_DIR_BY_IDENTIFIER_SUBDIR\"" \
+              "TERMUX__APPS_DIR_BY_UID=\"\$TERMUX__APPS_DIR/\$TERMUX__APPS_DIR_BY_UID_SUBDIR\"" \
+              "TERMUX__ROOTFS=\"\$TERMUX_APP__DATA_DIR/\$TERMUX__ROOTFS_SUBDIR\"" \
+              "TERMUX_BASE_DIR=\"\$TERMUX__ROOTFS\"" \
+              "TERMUX_APPS_DIR=\"\$TERMUX__ROOTFS/apps\"" \
+              "TERMUX__HOME=\"\$TERMUX__ROOTFS/\$TERMUX__HOME_SUBDIR\"" \
+              "TERMUX_ANDROID_HOME=\"\$TERMUX__HOME\"" \
+              "TERMUX__LEGACY_PROJECT_USER_CONFIG_DIR=\"\$TERMUX__HOME/.termux\"" \
+              "TERMUX__PREFIX=\"\$TERMUX__ROOTFS/\$TERMUX__PREFIX_SUBDIR\"" \
+              "termux_build_props__set_termux_prefix_dir_and_sub_variables \"\$TERMUX__PREFIX\" \"true\"" \
+              "TERMUX__PREFIX_CLASSICAL=\"\$TERMUX__PREFIX\"" \
+              "TERMUX_PREFIX_CLASSICAL=\"\$TERMUX__PREFIX\"" \
+              "TERMUX__PREFIX_GLIBC=\"\$TERMUX__PREFIX/\$TERMUX__PREFIX_GLIBC_SUBDIR\"" \
+              "TERMUX__PREFIX__TMP_DIR=\"\$TERMUX__PREFIX/\$TERMUX__PREFIX__TMP_SUBDIR\"" \
+              "TERMUX__PREFIX__PROFILE_D_DIR=\"\$TERMUX__PREFIX__ETC_DIR/profile.d\"" \
+              "TERMUX__PROJECT_SYSTEM_CONFIG_DIR=\"\$TERMUX__PREFIX__ETC_DIR/\$TERMUX__INTERNAL_NAME\"" \
+              "TERMUX__CACHE_DIR=\"\$TERMUX_APP__DATA_DIR/\$TERMUX__CACHE_SUBDIR\"" \
+              "TERMUX_CACHE_DIR=\"\$TERMUX__CACHE_DIR\"" \
+              "TERMUX_BOOTSTRAP__BOOTSTRAP_SYSTEM_CONFIG_DIR=\"\$TERMUX__PROJECT_SYSTEM_CONFIG_DIR/termux-bootstrap\"" \
+              "TERMUX_BOOTSTRAP__BOOTSTRAP_SECOND_STAGE_DIR=\"\$TERMUX_BOOTSTRAP__BOOTSTRAP_SYSTEM_CONFIG_DIR/\$TERMUX_BOOTSTRAP__BOOTSTRAP_SECOND_STAGE_SUBDIR\"" \
+              "TERMUX_APP__APP_DIR=\"\$TERMUX__APPS_DIR_BY_IDENTIFIER/\$TERMUX_APP__APP_IDENTIFIER\"" \
+              "TERMUX_APP__CORE__APPS_INFO_ENV_FILE=\"\$TERMUX_APP__APP_DIR/\$TERMUX_CORE__APPS_INFO_ENV_SUBFILE\"" \
+              "TERMUX_APP__CORE__APPS_INFO_JSON_FILE=\"\$TERMUX_APP__APP_DIR/\$TERMUX_CORE__APPS_INFO_JSON_SUBFILE\"" \
+              "TERMUX_APP__AM_SOCKET__SERVER_SOCKET_FILE=\"\$TERMUX_APP__APP_DIR/\$TERMUX_AM_SOCKET__SERVER_SOCKET_SUBFILE\"" \
+              "TERMUX_API_APP__APP_DIR=\"\$TERMUX__APPS_DIR_BY_IDENTIFIER/\$TERMUX_API_APP__APP_IDENTIFIER\"" \
+              "CGCT_DEFAULT_PREFIX=\"\$TERMUX__PREFIX_GLIBC\"" \
+              "CGCT_DIR=\"\$TERMUX_APP__DATA_DIR/cgct\"" \
+              > "$HOME/.termux/termuxrc.sh"
+            source ./scripts/properties.sh
+            test "$TERMUX__INTERNAL_NAME" = "cogo"
+            test "$TERMUX_APP__APP_IDENTIFIER" = "cogo"
+            test "$TERMUX_APP__PACKAGE_NAME" = "com.mkbrain.cogo"
+            test "$TERMUX_APP__DATA_DIR" = "/data/data/com.mkbrain.cogo"
+            test "$TERMUX__PROJECT_DIR" = "/data/data/com.mkbrain.cogo/cogo"
+            test "$TERMUX__CORE_DIR" = "/data/data/com.mkbrain.cogo/cogo/core"
+            test "$TERMUX__APPS_DIR" = "/data/data/com.mkbrain.cogo/cogo/app"
+            test "$TERMUX__APPS_DIR_BY_IDENTIFIER" = "/data/data/com.mkbrain.cogo/cogo/app/i"
+            test "$TERMUX__APPS_DIR_BY_UID" = "/data/data/com.mkbrain.cogo/cogo/app/u"
+            test "$TERMUX__ROOTFS" = "/data/data/com.mkbrain.cogo/files"
+            test "$TERMUX__HOME" = "/data/data/com.mkbrain.cogo/files/home"
+            test "$TERMUX__PREFIX" = "/data/data/com.mkbrain.cogo/files/usr"
+            test "$TERMUX__PREFIX__BIN_DIR" = "/data/data/com.mkbrain.cogo/files/usr/bin"
+            test "$TERMUX_APP__APP_DIR" = "/data/data/com.mkbrain.cogo/cogo/app/i/cogo"
+            stale=0
+            while IFS= read -r name; do
+              case "$name" in TERMUX_REPO_*) continue ;; esac
+              declaration="$(declare -p "$name" 2>/dev/null || true)"
+              case "$declaration" in
+                *"/data/data/com.termux"*|*"/data/data/com.itsaky.androidide"*)
+                  echo "STALE_PATH=$declaration"
+                  stale=1
+                  ;;
+              esac
+            done < <(compgen -v | grep -E "^(TERMUX_|CGCT_)")
+            test "$stale" -eq 0
+            printf "VERIFIED_PACKAGE=%s\nVERIFIED_DATA_DIR=%s\nVERIFIED_PROJECT=%s\nVERIFIED_ROOTFS=%s\nVERIFIED_PREFIX=%s\n" \
+              "$TERMUX_APP__PACKAGE_NAME" "$TERMUX_APP__DATA_DIR" "$TERMUX__PROJECT_DIR" "$TERMUX__ROOTFS" "$TERMUX__PREFIX"
+            # The pinned upstream build-bootstraps.sh -f branch expands an
+            # unset TERMUX_BUILT_PACKAGES_DIRECTORY_FOR_ARCH as "/*".
+            # Never invoke that path. This is a fresh disposable container;
+            # require both local package stores to be absent or empty instead.
+            built_store="/data/data/.built-packages"
+            output_store="/home/builder/termux-packages/output"
+            for store in "$built_store" "$output_store"; do
+              if [ -e "$store" ]; then
+                test -d "$store"
+                test ! -L "$store"
+                first_entry="$(find "$store" -mindepth 1 -maxdepth 1 -print -quit)"
+                if [ -n "$first_entry" ]; then
+                  echo "REFUSING_NONEMPTY_BUILD_STORE=$store"
+                  exit 1
+                fi
+              fi
+            done
+            output_store="/home/builder/termux-packages/output"
+            if [ -e "$output_store" ]; then
+              test -d "$output_store"
+              test ! -L "$output_store"
+            else
+              mkdir -p "$output_store"
+            fi
+            test -d "$output_store"
+            test ! -L "$output_store"
+            test -w "$output_store"
+            ./scripts/build-bootstraps.sh --architectures aarch64
+            test -s /home/builder/termux-packages/output/bootstrap-aarch64.zip
+            python3 -c "import zipfile; a=\"/home/builder/termux-packages/output/bootstrap-aarch64.zip\"; z=zipfile.ZipFile(a); n={x.lstrip(\"./\"):x for x in z.namelist()}; p=b\"/data/data/com.mkbrain.cogo/files/usr\"; o=(b\"/data/data/com.termux/files/usr\",b\"/data/data/com.itsaky.androidide/files/usr\"); assert \"SYMLINKS.txt\" in n; [(lambda d,k: (print(\"VERIFIED_BINARY=\"+k+\"; custom_prefix_occurrences=\"+str(d.count(p))), [(_ for _ in ()).throw(AssertionError(\"old prefix in \"+k)) for x in o if x in d], (_ for _ in ()).throw(AssertionError(\"custom prefix missing in \"+k)) if p not in d else None))(z.read(n[k]),k) for k in (\"bin/bash\",\"bin/apt\",\"bin/dpkg\")]"
+            python3 -c "import zipfile; z=zipfile.ZipFile('/home/builder/termux-packages/output/bootstrap-aarch64.zip'); n={p.lstrip('./') for p in z.namelist()}; required={'bin/bzip2','lib/libbz2.so.1.0.8'}; missing=required-n; assert not missing, 'missing bzip2 entries '+repr(missing); print('VERIFIED_BZIP2_ENTRIES='+repr(sorted(required)))"
+            echo "BOOTSTRAP_ARCHIVE_CONTENT=PASS"
+          '
+
+      - name: Create build manifest and checksum
+        shell: bash
+        run: |
+          set -euo pipefail
+          test -s termux-packages/output/bootstrap-aarch64.zip
+          sha256sum termux-packages/output/bootstrap-aarch64.zip
+          {
+            echo "artifact=output/bootstrap-aarch64.zip"
+            echo "package_id=com.mkbrain.cogo"
+            echo "termux_prefix=/data/data/com.mkbrain.cogo/files/usr"
+            echo "termux_packages_commit=$TERMUX_SOURCE_COMMIT"
+            echo "bootstrap_script_patch_sha256=$TERMUX_BOOTSTRAP_PATCH_SHA256"
+            echo "repository_commit=$GITHUB_SHA"
+            echo "workflow_run_id=$GITHUB_RUN_ID"
+            echo "sha256=$(sha256sum termux-packages/output/bootstrap-aarch64.zip | cut -d' ' -f1)"
+            echo "size_bytes=$(stat -c '%s' termux-packages/output/bootstrap-aarch64.zip)"
+          } > "termux-packages/MK_COGO_BOOTSTRAP_MANIFEST.txt"
+          cat "termux-packages/MK_COGO_BOOTSTRAP_MANIFEST.txt"
+
+      - name: Upload verified bootstrap artifact
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: mk-cogo-bootstrap-arm64-com-mkbrain-cogo
+          path: |
+            termux-packages/output/bootstrap-aarch64.zip
+            termux-packages/MK_COGO_BOOTSTRAP_MANIFEST.txt
+          if-no-files-found: error
+          retention-days: 14
