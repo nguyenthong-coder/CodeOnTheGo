@@ -1,4 +1,4 @@
-name: Build isolated CodeOnTheGo Termux bootstrap
+name: Build isolated CodeOnTheGo Termux bootstrap (MK-T)
 
 on:
   push:
