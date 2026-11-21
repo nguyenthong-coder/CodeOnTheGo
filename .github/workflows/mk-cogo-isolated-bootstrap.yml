@@ -221,6 +221,72 @@ jobs:
             echo "BOOTSTRAP_ARCHIVE_CONTENT=PASS"
           '
 
+
+      - name: Audit bootstrap ELF, scripts and symlinks for stale prefixes
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 - <<'PY'
+          from pathlib import Path
+          import hashlib
+          import zipfile
+
+          archive = Path("termux-packages/output/bootstrap-aarch64.zip")
+          expected = b"/data/data/com.mkbrain.cogo/files/usr"
+          forbidden = (
+              b"/data/data/com.termux/files/usr",
+              b"/data/data/com.itsaky.androidide/files/usr",
+          )
+          assert archive.is_file() and archive.stat().st_size > 0, "bootstrap archive missing"
+
+          with zipfile.ZipFile(archive) as z:
+              normalized = {item.filename.lstrip("./"): item for item in z.infolist()}
+              required = (
+                  "SYMLINKS.txt", "bin/bash", "bin/apt", "bin/dpkg",
+                  "bin/bzip2", "lib/libbz2.so.1.0.8",
+              )
+              missing = [name for name in required if name not in normalized]
+              assert not missing, "required bootstrap entries missing: " + repr(missing)
+
+              for name in ("bin/bash", "bin/apt", "bin/dpkg"):
+                  data = z.read(normalized[name])
+                  assert expected in data, name + " is missing the custom prefix"
+                  assert not any(old in data for old in forbidden), name + " contains a stale prefix"
+
+              scanned = 0
+              prefix_refs = 0
+              for name, info in normalized.items():
+                  if info.is_dir():
+                      continue
+                  with z.open(info) as stream:
+                      first = stream.read(4)
+                      is_runtime = (
+                          name == "SYMLINKS.txt"
+                          or first.startswith(b"\x7fELF")
+                          or first.startswith(b"#!")
+                      )
+                      if not is_runtime:
+                          continue
+                      scanned += 1
+                      tail = first
+                      for chunk in iter(lambda: stream.read(1024 * 1024), b""):
+                          data = tail + chunk
+                          for old in forbidden:
+                              if old in data:
+                                  raise AssertionError("stale prefix in runtime entry: " + name)
+                          prefix_refs += data.count(expected)
+                          tail = data[-(max(map(len, forbidden)) - 1):]
+
+              symlinks = z.read(normalized["SYMLINKS.txt"])
+              assert not any(old in symlinks for old in forbidden), "stale absolute prefix in SYMLINKS.txt"
+              assert expected in symlinks, "custom absolute prefix absent from SYMLINKS.txt"
+              print("BOOTSTRAP_RUNTIME_PREFIX_SCAN=PASS")
+              print("RUNTIME_ENTRIES_SCANNED=" + str(scanned))
+              print("CUSTOM_PREFIX_REFERENCES=" + str(prefix_refs))
+              print("BOOTSTRAP_SIZE_BYTES=" + str(archive.stat().st_size))
+              print("BOOTSTRAP_SHA256=" + hashlib.sha256(archive.read_bytes()).hexdigest())
+          PY
+
       - name: Create build manifest and checksum
         shell: bash
         run: |
