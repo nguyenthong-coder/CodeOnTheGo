@@ -73,7 +73,22 @@ jobs:
               raise SystemExit("GUARD_BLOCKED: expected exactly one bootstrap ZIP destination")
           patched = patched.replace(old_output, new_output, 1)
           p.write_text(patched)
-          print(hashlib.sha256(patched.encode()).hexdigest())
+
+          nano_build = Path("packages/nano/build.sh")
+          nano_source = nano_build.read_text()
+          nano_old_url = 'TERMUX_PKG_SRCURL="https://nano-editor.org/dist/latest/nano-$TERMUX_PKG_VERSION.tar.xz"'
+          nano_new_url = 'TERMUX_PKG_SRCURL="https://mirrors.kernel.org/gnu/nano/nano-$TERMUX_PKG_VERSION.tar.xz"'
+          expected_hash = "TERMUX_PKG_SHA256=a9affc52c9596ee0682bcdd4ceb3c0b235eb221d83d733dfd9b0dff45897cb0d"
+          if nano_source.count(nano_old_url) != 1:
+              raise SystemExit("GUARD_BLOCKED: nano source URL changed or not unique")
+          if nano_source.count(expected_hash) != 1:
+              raise SystemExit("GUARD_BLOCKED: pinned Nano 9.3 SHA-256 changed")
+          nano_updated = nano_source.replace(nano_old_url, nano_new_url, 1)
+          if nano_updated.count(nano_new_url) != 1 or nano_old_url in nano_updated:
+              raise SystemExit("GUARD_BLOCKED: Nano mirror rewrite failed")
+          nano_build.write_text(nano_updated)
+          print("NANO_SOURCE_MIRROR=mirrors.kernel.org; SHA256=" + expected_hash.split("=")[1])
+          print("TERMUX_BOOTSTRAP_PATCH_SHA256=" + hashlib.sha256(patched.encode()).hexdigest())
           PY
           )"
           test -n "$patch_sha"
