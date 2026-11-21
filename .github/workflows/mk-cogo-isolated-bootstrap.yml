@@ -122,7 +122,7 @@ jobs:
             printf "%s\n" \
               "TERMUX__INTERNAL_NAME=\"cogo\"" \
               "TERMUX__PROJECT_SUBDIR=\"cogo\"" \
-              "TERMUX_APP__NAME=\"CodeOnTheGo\"" \
+              "TERMUX_APP__NAME=\"MK-T\"" \
               "TERMUX_APP__APP_IDENTIFIER=\"cogo\"" \
               "TERMUX_APP__PACKAGE_NAME=\"com.mkbrain.cogo\"" \
               "TERMUX_APP_PACKAGE=\"\$TERMUX_APP__PACKAGE_NAME\"" \
