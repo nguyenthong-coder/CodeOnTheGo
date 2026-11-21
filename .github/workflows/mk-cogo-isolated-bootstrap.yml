@@ -3,6 +3,7 @@ name: Build isolated CodeOnTheGo Termux bootstrap (MK-T)
 on:
   push:
     branches:
+      - stage
       - mk-safe-clipboard-isolated-bootstrap
     paths:
       - .github/workflows/mk-cogo-isolated-bootstrap.yml
